@@ -42,8 +42,14 @@
         auth_method: token
         token: "{{ vault_token }}"
 
-    - name: Revoke previous certificate in Vault
+    - name: Extract serial number from previous certificate
       register: revoked_cert
+      when: existing_cert is succeeded
+      changed_when: false
+      ansible.builtin.command:
+        cmd: openssl x509 -noout -serial -in {{ cert_dir }}/{{ domain_name }}.crt
+
+    - name: Revoke previous certificate in Vault
       when: existing_cert is succeeded
       delegate_to: localhost
       become: false
@@ -92,7 +98,7 @@
       ansible.builtin.debug:
         msg:
           - "Certificate issued successfully for {{ domain_name }}"
-          - "Revoked serial: {{ revoked_cert.data.serial_number | default('N/A: no previous certificate') }}"
+          - "Revoked serial: {{ revoked_cert.stdout | default('N/A: no previous certificate') }}"
           - "New Serial: {{ vault_cert.data.serial_number }}"
           - "Expiration: {{ '%b %d %Y %I:%M:%S %p %Z' | strftime(vault_cert.data.expiration) }}"
           - "Chain verification: {{ cert_verify.stdout }}"
