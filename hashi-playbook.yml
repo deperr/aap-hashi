@@ -59,3 +59,23 @@
         owner: root
         group: root
         mode: '0644'
+
+    - name: Verify certificate chain of trust
+      register: cert_verify
+      changed_when: false
+      ansible.builtin.command:
+        cmd: >-
+          openssl verify
+          -CAfile {{ cert_dir }}/ca_chain.crt
+          {{ cert_dir }}/{{ domain_name }}.crt
+
+    - name: Certificate lifecycle complete
+      ansible.builtin.debug:
+        msg:
+          - "Certificate issued successfully for {{ domain_name }}"
+          - "Serial: {{ vault_cert.data.serial_number }}"
+          - "Expiration: {{ vault_cert.data.expiration | int | strftime('%Y-%m-%d %H:%M:%S UTC') }}"
+          - "Chain verification: {{ cert_verify.stdout }}"
+          - "Certificate: {{ cert_dir }}/{{ domain_name }}.crt"
+          - "Private key: {{ key_dir }}/{{ domain_name }}.key"
+          - "CA chain: {{ cert_dir }}/ca_chain.crt"
