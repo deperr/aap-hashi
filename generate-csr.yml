@@ -1,0 +1,86 @@
+---
+
+- name: "Certificate Lifecycle - Phase 1: Generate CSR"
+  hosts: "{{ _hosts | default('web02.dperrone.dev') }}"
+  become: true
+  gather_facts: false
+  vars:
+    cert_dir: "/etc/pki/tls/certs"
+    key_dir: "/etc/pki/tls/private"
+    staging_dir: "/opt/certs/staging"
+    domain_name: "{{ inventory_hostname }}"
+
+  tasks:
+    - name: Ensure secure system directories exist on the target host
+      loop:
+        - "{{ cert_dir }}"
+        - "{{ key_dir }}"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Generate secure private key on target host
+      ansible.builtin.command:
+        cmd: openssl genrsa -out {{ key_dir }}/{{ domain_name }}.key 2048
+        creates: "{{ key_dir }}/{{ domain_name }}.key"
+
+    - name: Set private key permissions
+      ansible.builtin.file:
+        path: "{{ key_dir }}/{{ domain_name }}.key"
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Generate Certificate Signing Request (CSR) on target host
+      ansible.builtin.command:
+        cmd: >-
+          openssl req -new
+          -key {{ key_dir }}/{{ domain_name }}.key
+          -out /tmp/{{ domain_name }}.csr
+          -subj "/CN={{ domain_name }}"
+          -addext "subjectAltName=DNS:{{ domain_name }}"
+      changed_when: true
+
+    - name: Read CSR content from target host
+      register: slurped_csr
+      ansible.builtin.slurp:
+        src: "/tmp/{{ domain_name }}.csr"
+
+    - name: Ensure staging directory exists on controller
+      delegate_to: localhost
+      become: false
+      ansible.builtin.file:
+        path: "{{ staging_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Save CSR to secure local staging folder
+      delegate_to: localhost
+      become: false
+      ansible.builtin.copy:
+        content: "{{ slurped_csr['content'] | b64decode }}"
+        dest: "{{ staging_dir }}/{{ domain_name }}.csr"
+        mode: '0600'
+
+    - name: Clean up temporary CSR from target host
+      ansible.builtin.file:
+        path: "/tmp/{{ domain_name }}.csr"
+        state: absent
+
+    - name: Save target host to job artifacts for Phase 2
+      ansible.builtin.set_stats:
+        data:
+          csr_domain: "{{ domain_name }}"
+          csr_staging_path: "{{ staging_dir }}/{{ domain_name }}.csr"
+        per_host: false
+        aggregate: true
+
+    - name: CSR generation complete - pending approval
+      ansible.builtin.debug:
+        msg:
+          - "CSR generated for {{ domain_name }}"
+          - "Staged at: {{ staging_dir }}/{{ domain_name }}.csr"
+          - "Workflow paused - awaiting approval to sign and deploy"

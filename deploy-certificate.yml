@@ -1,0 +1,113 @@
+---
+
+- name: "Certificate Lifecycle - Phase 2: Sign and Deploy Certificate"
+  hosts: "{{ _hosts | default('web02.dperrone.dev') }}"
+  become: true
+  gather_facts: false
+  vars:
+    cert_dir: "/etc/pki/tls/certs"
+    key_dir: "/etc/pki/tls/private"
+    staging_dir: "/opt/certs/staging"
+    domain_name: "{{ inventory_hostname }}"
+    restart_services:
+      - sshd
+      - stunnel
+      - named
+
+  tasks:
+    - name: Validate staged CSR exists on controller
+      register: staged_csr_stat
+      delegate_to: localhost
+      become: false
+      ansible.builtin.stat:
+        path: "{{ staging_dir }}/{{ domain_name }}.csr"
+
+    - name: Fail if CSR is not present in staging directory
+      when: not staged_csr_stat.stat.exists
+      ansible.builtin.fail:
+        msg: "CSR not found at {{ staging_dir }}/{{ domain_name }}.csr — Phase 1 may not have completed successfully."
+
+    - name: Read staged CSR from controller
+      register: staged_csr
+      delegate_to: localhost
+      become: false
+      ansible.builtin.slurp:
+        src: "{{ staging_dir }}/{{ domain_name }}.csr"
+
+    - name: Submit CSR to Vault PKI engine for signing
+      register: vault_cert
+      delegate_to: localhost
+      become: false
+      hashicorp.vault.pki_certificate:
+        state: signed
+        engine_mount_point: pki
+        role_name: "{{ vault_pki_role }}"
+        common_name: "{{ domain_name }}"
+        csr: "{{ staged_csr['content'] | b64decode }}"
+        alt_names:
+          - "{{ domain_name }}"
+        url: "{{ vault_url }}"
+        auth_method: token
+        token: "{{ vault_token }}"
+
+    - name: Deploy signed certificate to target host
+      ansible.builtin.copy:
+        content: "{{ vault_cert.data.certificate }}"
+        dest: "{{ cert_dir }}/{{ domain_name }}.crt"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Deploy CA chain to target host
+      ansible.builtin.copy:
+        content: "{{ vault_cert.data.issuing_ca }}"
+        dest: "{{ cert_dir }}/ca_chain.crt"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Verify certificate chain of trust
+      register: cert_verify
+      changed_when: false
+      ansible.builtin.command:
+        cmd: >-
+          openssl verify
+          -CAfile {{ cert_dir }}/ca_chain.crt
+          {{ cert_dir }}/{{ domain_name }}.crt
+
+    - name: Fail if certificate chain verification failed
+      when: "'OK' not in cert_verify.stdout"
+      ansible.builtin.fail:
+        msg: "Certificate chain verification FAILED: {{ cert_verify.stdout }}"
+
+    - name: Configure and restart core services
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: restarted
+        enabled: true
+      loop: "{{ restart_services }}"
+      ignore_errors: true
+      register: service_results
+
+    - name: Clean up staged CSR from controller
+      delegate_to: localhost
+      become: false
+      ansible.builtin.file:
+        path: "{{ staging_dir }}/{{ domain_name }}.csr"
+        state: absent
+
+    - name: Certificate deployment complete - universal trust established
+      ansible.builtin.debug:
+        msg:
+          - "Certificate signed and deployed for {{ domain_name }}"
+          - "Serial: {{ vault_cert.data.serial_number }}"
+          - "Expiration: {{ '%b %d %Y %I:%M:%S %p %Z' | strftime(vault_cert.data.expiration) }}"
+          - "Chain verification: {{ cert_verify.stdout }}"
+          - ""
+          - "Files deployed:"
+          - "  Certificate: {{ cert_dir }}/{{ domain_name }}.crt"
+          - "  Private key: {{ key_dir }}/{{ domain_name }}.key"
+          - "  CA chain: {{ cert_dir }}/ca_chain.crt"
+          - ""
+          - "Service status:"
+          - "{% for result in service_results.results %}  {{ result.item }}: {{ 'OK' if result is succeeded else 'FAILED' }}\n{% endfor %}"
