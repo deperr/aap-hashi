@@ -46,8 +46,8 @@
       register: revoked_cert
       when: existing_cert is succeeded
       changed_when: false
-      ansible.builtin.command:
-        cmd: openssl x509 -noout -serial -in {{ cert_dir }}/{{ domain_name }}.crt
+      ansible.builtin.shell:
+        cmd: openssl x509 -noout -serial -in {{ cert_dir }}/{{ domain_name }}.crt | cut -d= -f2 | sed 's/../&:/g' | sed 's/:$//' | tr 'A-F' 'a-f'
 
     - name: Revoke previous certificate in Vault
       when: existing_cert is succeeded
