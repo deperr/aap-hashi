@@ -32,7 +32,6 @@
         common_name: "{{ domain_name }}"
         alt_names:
           - "DNS:{{ domain_name }}"
-          - "DNS:localhost"
         url: "{{ vault_url }}"
         auth_method: token
         token: "{{ vault_token }}"
