@@ -1,0 +1,83 @@
+---
+
+- name: "Automated Certificate Lifecycle"
+  hosts: "{{ _hosts | default('web02.dperrone.dev') }}"
+  become: true
+  gather_facts: true
+  vars:
+    cert_dir: "/etc/pki/tls/certs"
+    key_dir: "/etc/pki/tls/private"
+    domain_name: "{{ inventory_hostname }}"
+
+  tasks:
+    - name: Ensure secure system directories exist on the target host
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      loop:
+        - "{{ cert_dir }}"
+        - "{{ key_dir }}"
+
+    - name: Generate secure private key directly on the target host
+      community.crypto.openssl_privatekey:
+        path: "{{ key_dir }}/{{ domain_name }}.key"
+        size: 2048
+        type: RSA
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Generate the Certificate Signing Request (CSR) on target host
+      community.crypto.openssl_csr:
+        path: "/tmp/{{ domain_name }}.csr"
+        privatekey_path: "{{ key_dir }}/{{ domain_name }}.key"
+        common_name: "{{ domain_name }}"
+        subject_alternative_name:
+          - "DNS:{{ domain_name }}"
+          - "DNS:localhost"
+
+    - name: Read CSR content from target host into memory
+      register: slurped_csr
+      ansible.builtin.slurp:
+        src: "/tmp/{{ domain_name }}.csr"
+
+    - name: Sign CSR via HashiCorp Vault PKI engine
+      register: vault_cert
+      delegate_to: localhost
+      become: false
+      hashicorp.vault.pki_certificate:
+        state: signed
+        engine_mount_point: pki
+        role_name: "{{ vault_pki_role }}"
+        common_name: "{{ domain_name }}"
+        csr: "{{ slurped_csr['content'] | b64decode }}"
+        alt_names:
+          - "DNS:{{ domain_name }}"
+          - "DNS:localhost"
+        vault_url: "{{ vault_url }}"
+        vault_auth_method: token
+        vault_token: "{{ vault_token }}"
+
+    - name: Write the signed public certificate back to target host
+      ansible.builtin.copy:
+        content: "{{ vault_cert.data.certificate }}"
+        dest: "{{ cert_dir }}/{{ domain_name }}.crt"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Write the issuing CA certificate chain to target host
+      ansible.builtin.copy:
+        content: "{{ vault_cert.data.issuing_ca }}"
+        dest: "{{ cert_dir }}/ca_chain.crt"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Clean up temporary CSR file from target host
+      ansible.builtin.file:
+        path: "/tmp/{{ domain_name }}.csr"
+        state: absent
