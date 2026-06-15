@@ -74,7 +74,7 @@
         msg:
           - "Certificate issued successfully for {{ domain_name }}"
           - "Serial: {{ vault_cert.data.serial_number }}"
-          - "Expiration: {{ vault_cert.data.expiration | int | strftime('%Y-%m-%d %H:%M:%S UTC') }}"
+          - "Expiration: {{ vault_cert.data.expiration }}"
           - "Chain verification: {{ cert_verify.stdout }}"
           - "Certificate: {{ cert_dir }}/{{ domain_name }}.crt"
           - "Private key: {{ key_dir }}/{{ domain_name }}.key"
