@@ -33,9 +33,9 @@
         alt_names:
           - "DNS:{{ domain_name }}"
           - "DNS:localhost"
-        vault_url: "{{ vault_url }}"
-        vault_auth_method: token
-        vault_token: "{{ vault_token }}"
+        url: "{{ vault_url }}"
+        auth_method: token
+        token: "{{ vault_token }}"
 
     - name: Write the private key to target host
       ansible.builtin.copy:
