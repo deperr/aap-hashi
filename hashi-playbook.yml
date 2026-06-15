@@ -21,6 +21,12 @@
         - "{{ cert_dir }}"
         - "{{ key_dir }}"
 
+    - name: Check for existing certificate on target host
+      register: existing_cert
+      ignore_errors: true
+      ansible.builtin.slurp:
+        src: "{{ cert_dir }}/{{ domain_name }}.crt"
+
     - name: Issue certificate and key from HashiCorp Vault PKI engine
       register: vault_cert
       delegate_to: localhost
@@ -32,6 +38,18 @@
         common_name: "{{ domain_name }}"
         alt_names:
           - "{{ domain_name }}"
+        url: "{{ vault_url }}"
+        auth_method: token
+        token: "{{ vault_token }}"
+
+    - name: Revoke previous certificate in Vault
+      when: existing_cert is succeeded
+      delegate_to: localhost
+      become: false
+      hashicorp.vault.pki_certificate:
+        state: revoked
+        engine_mount_point: pki
+        certificate: "{{ existing_cert['content'] | b64decode }}"
         url: "{{ vault_url }}"
         auth_method: token
         token: "{{ vault_token }}"
