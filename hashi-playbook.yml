@@ -31,7 +31,7 @@
         role_name: "{{ vault_pki_role }}"
         common_name: "{{ domain_name }}"
         alt_names:
-          - "DNS:{{ domain_name }}"
+          - "{{ domain_name }}"
         url: "{{ vault_url }}"
         auth_method: token
         token: "{{ vault_token }}"
