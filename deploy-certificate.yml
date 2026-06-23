@@ -11,8 +11,6 @@
     domain_name: "{{ inventory_hostname }}"
     restart_services:
       - sshd
-      - stunnel
-      - named
 
   tasks:
     - name: Validate signed certificate exists on target host
