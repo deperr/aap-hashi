@@ -1,0 +1,9 @@
+---
+
+- name: "Deploy HashiCorp Vault on Rootless Podman"
+  hosts: "{{ _hosts | default('web03.dperrone.dev') }}"
+  become: false
+  gather_facts: true
+
+  roles:
+    - deploy_vault

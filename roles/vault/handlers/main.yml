@@ -1,0 +1,7 @@
+---
+
+- name: restart vault
+  containers.podman.podman_container:
+    name: "{{ vault_container_name }}"
+    state: started
+    force_restart: true

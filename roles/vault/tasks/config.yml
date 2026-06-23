@@ -1,0 +1,49 @@
+---
+
+- name: Install Podman on RHEL/Fedora
+  when: ansible_os_family == "RedHat"
+  become: true
+  ansible.builtin.dnf:
+    name:
+      - podman
+      - podman-plugins
+      - slirp4netns
+      - fuse-overlayfs
+    state: present
+
+- name: Install Podman on Ubuntu/Debian
+  when: ansible_os_family == "Debian"
+  become: true
+  ansible.builtin.apt:
+    name:
+      - podman
+      - slirp4netns
+      - fuse-overlayfs
+      - uidmap
+    state: present
+    update_cache: true
+
+- name: Ensure Vault base directories exist and are traversable
+  loop:
+    - "{{ vault_base_dir }}"
+    - "{{ vault_config_dir }}"
+    - "{{ vault_data_dir }}"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+
+- name: Deploy Vault configuration file
+  notify: restart vault
+  ansible.builtin.template:
+    src: vault.hcl.j2
+    dest: "{{ vault_config_dir }}/vault.hcl"
+    mode: '0644'
+
+- name: Open Vault port in firewall
+  become: true
+  ansible.posix.firewalld:
+    port: "{{ vault_port }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled

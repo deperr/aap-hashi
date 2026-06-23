@@ -1,0 +1,20 @@
+---
+
+- name: Apply rootless Podman UID/GID mapping for Vault
+  changed_when: false
+  ansible.builtin.command:
+    cmd: "podman unshare chown -R {{ vault_internal_uid }}:{{ vault_internal_gid }} {{ vault_base_dir }}"
+
+- name: Deploy and start the Vault container
+  notify: restart vault
+  containers.podman.podman_container:
+    name: "{{ vault_container_name }}"
+    image: "{{ vault_image }}:{{ vault_version }}"
+    state: started
+    recreate: "{{ vault_container_recreate }}"
+    ports:
+      - "{{ vault_port }}:8200"
+    volumes:
+      - "{{ vault_config_dir }}:/vault/config:Z"
+      - "{{ vault_data_dir }}:{{ vault_storage_path }}:Z"
+    command: server

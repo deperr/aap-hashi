@@ -1,6 +1,6 @@
 ---
 
-- name: "Certificate Lifecycle - Phase 2: Sign and Deploy Certificate"
+- name: "Certificate Lifecycle - Phase 2: Deploy Signed Certificate"
   hosts: "{{ _hosts | default('web02.dperrone.dev') }}"
   become: true
   gather_facts: false
@@ -15,44 +15,33 @@
       - named
 
   tasks:
-    - name: Validate staged CSR exists on controller
-      register: staged_csr_stat
+    - name: Validate signed certificate exists in staging
+      register: staged_cert_stat
       delegate_to: localhost
       become: false
       ansible.builtin.stat:
-        path: "{{ staging_dir }}/{{ domain_name }}.csr"
+        path: "{{ staging_dir }}/{{ domain_name }}.crt"
 
-    - name: Fail if CSR is not present in staging directory
-      when: not staged_csr_stat.stat.exists
+    - name: Fail if signed certificate has not been staged
+      when: not staged_cert_stat.stat.exists
       ansible.builtin.fail:
-        msg: "CSR not found at {{ staging_dir }}/{{ domain_name }}.csr — Phase 1 may not have completed successfully."
+        msg: "Signed certificate not found at {{ staging_dir }}/{{ domain_name }}.crt — ensure offline CA signing is complete before approving."
 
-    - name: Read staged CSR from controller
-      register: staged_csr
+    - name: Validate CA chain exists in staging
+      register: staged_ca_stat
       delegate_to: localhost
       become: false
-      ansible.builtin.slurp:
-        src: "{{ staging_dir }}/{{ domain_name }}.csr"
+      ansible.builtin.stat:
+        path: "{{ staging_dir }}/ca_chain.crt"
 
-    - name: Submit CSR to Vault PKI engine for signing
-      register: vault_cert
-      delegate_to: localhost
-      become: false
-      hashicorp.vault.pki_certificate:
-        state: signed
-        engine_mount_point: pki
-        role_name: "{{ vault_pki_role }}"
-        common_name: "{{ domain_name }}"
-        csr: "{{ staged_csr['content'] | b64decode }}"
-        alt_names:
-          - "{{ domain_name }}"
-        url: "{{ vault_url }}"
-        auth_method: token
-        token: "{{ vault_token }}"
+    - name: Fail if CA chain has not been staged
+      when: not staged_ca_stat.stat.exists
+      ansible.builtin.fail:
+        msg: "CA chain not found at {{ staging_dir }}/ca_chain.crt — ensure the CA chain is deposited before approving."
 
     - name: Deploy signed certificate to target host
       ansible.builtin.copy:
-        content: "{{ vault_cert.data.certificate }}"
+        src: "{{ staging_dir }}/{{ domain_name }}.crt"
         dest: "{{ cert_dir }}/{{ domain_name }}.crt"
         owner: root
         group: root
@@ -60,7 +49,7 @@
 
     - name: Deploy CA chain to target host
       ansible.builtin.copy:
-        content: "{{ vault_cert.data.issuing_ca }}"
+        src: "{{ staging_dir }}/ca_chain.crt"
         dest: "{{ cert_dir }}/ca_chain.crt"
         owner: root
         group: root
@@ -81,27 +70,29 @@
         msg: "Certificate chain verification FAILED: {{ cert_verify.stdout }}"
 
     - name: Configure and restart core services
+      register: service_results
+      loop: "{{ restart_services }}"
+      ignore_errors: true
       ansible.builtin.service:
         name: "{{ item }}"
         state: restarted
         enabled: true
-      loop: "{{ restart_services }}"
-      ignore_errors: true
-      register: service_results
 
-    - name: Clean up staged CSR from controller
+    - name: Clean up staging directory
       delegate_to: localhost
       become: false
+      loop:
+        - "{{ staging_dir }}/{{ domain_name }}.csr"
+        - "{{ staging_dir }}/{{ domain_name }}.crt"
+        - "{{ staging_dir }}/ca_chain.crt"
       ansible.builtin.file:
-        path: "{{ staging_dir }}/{{ domain_name }}.csr"
+        path: "{{ item }}"
         state: absent
 
     - name: Certificate deployment complete - universal trust established
       ansible.builtin.debug:
         msg:
-          - "Certificate signed and deployed for {{ domain_name }}"
-          - "Serial: {{ vault_cert.data.serial_number }}"
-          - "Expiration: {{ '%b %d %Y %I:%M:%S %p %Z' | strftime(vault_cert.data.expiration) }}"
+          - "Certificate deployed for {{ domain_name }}"
           - "Chain verification: {{ cert_verify.stdout }}"
           - ""
           - "Files deployed:"

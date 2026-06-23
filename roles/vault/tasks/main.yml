@@ -1,0 +1,15 @@
+---
+
+- name: Include initial configuration tasks
+  ansible.builtin.include_tasks: config.yml
+
+- name: Include podman container tasks
+  ansible.builtin.include_tasks: podman.yml
+
+- name: Include Vault initialization and unseal tasks
+  when: vault_init
+  ansible.builtin.include_tasks: unseal.yml
+
+- name: Include secrets engine configuration tasks
+  when: vault_configure_engines
+  ansible.builtin.include_tasks: engines.yml

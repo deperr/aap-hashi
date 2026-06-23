@@ -1,0 +1,75 @@
+---
+
+# This playbook simulates the offline CA signing process.
+# Run this DURING the approval gate pause to sign the staged CSR
+# and deposit the signed cert back into staging.
+#
+# In a real offline CA scenario, an admin would:
+#   1. Copy the CSR to secure media
+#   2. Transport it to the air-gapped Vault
+#   3. Sign it manually
+#   4. Transport the signed cert back
+#   5. Deposit it in the staging folder
+#
+# This playbook automates that using your online Vault (for demo purposes).
+
+- name: "Simulate Offline CA - Sign Staged CSR"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    staging_dir: "/opt/certs/staging"
+    domain_name: "{{ _domain | default('web02.dperrone.dev') }}"
+
+  tasks:
+    - name: Validate CSR is present in staging
+      register: csr_stat
+      ansible.builtin.stat:
+        path: "{{ staging_dir }}/{{ domain_name }}.csr"
+
+    - name: Fail if CSR not found
+      when: not csr_stat.stat.exists
+      ansible.builtin.fail:
+        msg: "No CSR found at {{ staging_dir }}/{{ domain_name }}.csr — run Phase 1 first."
+
+    - name: Read staged CSR
+      register: staged_csr
+      ansible.builtin.slurp:
+        src: "{{ staging_dir }}/{{ domain_name }}.csr"
+
+    - name: Sign CSR via Vault PKI (simulating offline CA)
+      register: vault_cert
+      hashicorp.vault.pki_certificate:
+        state: signed
+        engine_mount_point: pki
+        role_name: "{{ vault_pki_role }}"
+        common_name: "{{ domain_name }}"
+        csr: "{{ staged_csr['content'] | b64decode }}"
+        alt_names:
+          - "{{ domain_name }}"
+        url: "{{ vault_url }}"
+        auth_method: token
+        token: "{{ vault_token }}"
+
+    - name: Deposit signed certificate in staging
+      ansible.builtin.copy:
+        content: "{{ vault_cert.data.certificate }}"
+        dest: "{{ staging_dir }}/{{ domain_name }}.crt"
+        mode: '0600'
+
+    - name: Deposit CA chain in staging
+      ansible.builtin.copy:
+        content: "{{ vault_cert.data.issuing_ca }}"
+        dest: "{{ staging_dir }}/ca_chain.crt"
+        mode: '0600'
+
+    - name: Offline CA signing complete
+      ansible.builtin.debug:
+        msg:
+          - "=== OFFLINE CA SIGNING SIMULATED ==="
+          - ""
+          - "Signed certificate deposited: {{ staging_dir }}/{{ domain_name }}.crt"
+          - "CA chain deposited: {{ staging_dir }}/ca_chain.crt"
+          - "Serial: {{ vault_cert.data.serial_number }}"
+          - ""
+          - "You may now approve the workflow in AAP to continue deployment."

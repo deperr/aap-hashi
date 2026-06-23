@@ -1,0 +1,106 @@
+---
+
+- name: Wait for Vault to become responsive
+  register: vault_health
+  until: vault_health is succeeded
+  retries: 12
+  delay: 5
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/sys/health"
+    method: GET
+    status_code: [200, 429, 472, 473, 501, 503]
+
+- name: Check Vault initialization status
+  register: vault_init_status
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/sys/init"
+    method: GET
+
+- name: Initialize Vault
+  when: not vault_init_status.json.initialized
+  block:
+    - name: Send initialization request to Vault
+      register: vault_init_result
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/sys/init"
+        method: PUT
+        body_format: json
+        body:
+          secret_shares: "{{ vault_key_shares }}"
+          secret_threshold: "{{ vault_key_threshold }}"
+        status_code: 200
+
+    - name: Store unseal keys and root token
+      ansible.builtin.set_fact:
+        vault_unseal_keys: "{{ vault_init_result.json.keys }}"
+        vault_root_token: "{{ vault_init_result.json.root_token }}"
+
+    - name: Display root token and unseal keys
+      ansible.builtin.debug:
+        msg:
+          - "=== VAULT INITIALIZED - SAVE THESE CREDENTIALS SECURELY ==="
+          - ""
+          - "Root Token: {{ vault_root_token }}"
+          - ""
+          - "Unseal Keys:"
+          - "{% for key in vault_unseal_keys %}  Key {{ loop.index }}: {{ key }}\n{% endfor %}"
+          - ""
+          - "You need {{ vault_key_threshold }} of {{ vault_key_shares }} keys to unseal."
+          - "=== STORE THESE IN A SECURE LOCATION - THEY CANNOT BE RETRIEVED AGAIN ==="
+
+    - name: Save credentials to local file
+      delegate_to: localhost
+      ansible.builtin.copy:
+        content: |
+          # Vault Credentials - {{ inventory_hostname }}
+          # Generated: {{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}
+          # SECURE THIS FILE IMMEDIATELY
+
+          Root Token: {{ vault_root_token }}
+
+          Unseal Keys ({{ vault_key_threshold }} of {{ vault_key_shares }} required):
+          {% for key in vault_unseal_keys %}
+          Key {{ loop.index }}: {{ key }}
+          {% endfor %}
+        dest: "./vault_credentials_{{ inventory_hostname }}.txt"
+        mode: '0600'
+
+- name: Check Vault seal status
+  register: vault_seal_status
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/sys/seal-status"
+    method: GET
+
+- name: Unseal Vault
+  when: vault_seal_status.json.sealed
+  block:
+    - name: Determine unseal keys source
+      ansible.builtin.set_fact:
+        _unseal_keys: "{{ vault_unseal_keys | default(vault_provided_unseal_keys) }}"
+
+    - name: Submit unseal keys to Vault
+      register: unseal_result
+      loop: "{{ _unseal_keys[:vault_key_threshold] }}"
+      loop_control:
+        label: "Unseal key {{ index + 1 }}/{{ vault_key_threshold }}"
+        index_var: index
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/sys/unseal"
+        method: PUT
+        body_format: json
+        body:
+          key: "{{ item }}"
+        status_code: 200
+
+    - name: Verify Vault is unsealed
+      register: final_seal_status
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/sys/seal-status"
+        method: GET
+
+    - name: Confirm unseal status
+      ansible.builtin.assert:
+        that:
+          - not final_seal_status.json.sealed
+        fail_msg: "Vault is still sealed after submitting unseal keys."
+        success_msg: "Vault successfully unsealed and ready for use."

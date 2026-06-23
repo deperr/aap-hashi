@@ -1,0 +1,87 @@
+---
+
+- name: List currently enabled secrets engines
+  register: existing_engines
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/sys/mounts"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ vault_root_token }}"
+    status_code: 200
+
+- name: Enable KV version 2 secrets engine
+  when: (vault_kv_path + '/') not in existing_engines.json.data
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/sys/mounts/{{ vault_kv_path }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_root_token }}"
+    body_format: json
+    body:
+      type: kv
+      options:
+        version: "2"
+      description: "Key/Value secrets engine"
+    status_code: [200, 204]
+
+- name: Enable PKI secrets engine
+  when: (vault_pki_path + '/') not in existing_engines.json.data
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/sys/mounts/{{ vault_pki_path }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_root_token }}"
+    body_format: json
+    body:
+      type: pki
+      config:
+        max_lease_ttl: "{{ vault_pki_max_ttl }}"
+      description: "PKI certificate authority"
+    status_code: [200, 204]
+
+- name: Generate PKI root CA certificate
+  when: (vault_pki_path + '/') not in existing_engines.json.data
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/{{ vault_pki_path }}/root/generate/internal"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_root_token }}"
+    body_format: json
+    body:
+      common_name: "{{ vault_pki_root_cn }}"
+      ttl: "{{ vault_pki_max_ttl }}"
+    status_code: 200
+
+- name: Configure PKI certificate issuing URLs
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/{{ vault_pki_path }}/config/urls"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_root_token }}"
+    body_format: json
+    body:
+      issuing_certificates: "{{ vault_addr }}/v1/{{ vault_pki_path }}/ca"
+      crl_distribution_points: "{{ vault_addr }}/v1/{{ vault_pki_path }}/crl"
+    status_code: [200, 204]
+
+- name: Create PKI role for certificate issuance
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/{{ vault_pki_path }}/roles/{{ vault_pki_role_name }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vault_root_token }}"
+    body_format: json
+    body:
+      allowed_domains: "{{ vault_pki_allowed_domains }}"
+      allow_subdomains: true
+      allow_bare_domains: true
+      max_ttl: "{{ vault_pki_cert_ttl }}"
+    status_code: [200, 204]
+
+- name: Secrets engines configured
+  ansible.builtin.debug:
+    msg:
+      - "KV v2 engine enabled at: {{ vault_kv_path }}/"
+      - "PKI engine enabled at: {{ vault_pki_path }}/"
+      - "PKI role created: {{ vault_pki_role_name }}"
+      - "PKI allowed domains: {{ vault_pki_allowed_domains | join(', ') }}"
