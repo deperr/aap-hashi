@@ -2,27 +2,18 @@
 
 # This playbook simulates the offline CA signing process.
 # Run this DURING the approval gate pause to sign the staged CSR
-# and deposit the signed cert back into staging.
-#
-# In a real offline CA scenario, an admin would:
-#   1. Copy the CSR to secure media
-#   2. Transport it to the air-gapped Vault
-#   3. Sign it manually
-#   4. Transport the signed cert back
-#   5. Deposit it in the staging folder
-#
-# This playbook automates that using your online Vault (for demo purposes).
+# and deposit the signed cert back into staging on the target host.
 
 - name: "Simulate Offline CA - Sign Staged CSR"
-  hosts: localhost
-  connection: local
+  hosts: "{{ _hosts | default('web02.dperrone.dev') }}"
+  become: true
   gather_facts: false
   vars:
     staging_dir: "/opt/certs/staging"
-    domain_name: "{{ _domain | default('web02.dperrone.dev') }}"
+    domain_name: "{{ inventory_hostname }}"
 
   tasks:
-    - name: Validate CSR is present in staging
+    - name: Validate CSR is present on target host
       register: csr_stat
       ansible.builtin.stat:
         path: "{{ staging_dir }}/{{ domain_name }}.csr"
@@ -32,13 +23,15 @@
       ansible.builtin.fail:
         msg: "No CSR found at {{ staging_dir }}/{{ domain_name }}.csr — run Phase 1 first."
 
-    - name: Read staged CSR
+    - name: Read staged CSR from target host
       register: staged_csr
       ansible.builtin.slurp:
         src: "{{ staging_dir }}/{{ domain_name }}.csr"
 
     - name: Sign CSR via Vault PKI (simulating offline CA)
       register: vault_cert
+      delegate_to: localhost
+      become: false
       hashicorp.vault.pki_certificate:
         state: signed
         engine_mount_point: pki
@@ -51,16 +44,20 @@
         auth_method: token
         token: "{{ vault_token }}"
 
-    - name: Deposit signed certificate in staging
+    - name: Deposit signed certificate on target host
       ansible.builtin.copy:
         content: "{{ vault_cert.data.certificate }}"
         dest: "{{ staging_dir }}/{{ domain_name }}.crt"
+        owner: root
+        group: root
         mode: '0600'
 
-    - name: Deposit CA chain in staging
+    - name: Deposit CA chain on target host
       ansible.builtin.copy:
         content: "{{ vault_cert.data.issuing_ca }}"
         dest: "{{ staging_dir }}/ca_chain.crt"
+        owner: root
+        group: root
         mode: '0600'
 
     - name: Offline CA signing complete

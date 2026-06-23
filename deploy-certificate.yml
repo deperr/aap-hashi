@@ -15,10 +15,8 @@
       - named
 
   tasks:
-    - name: Validate signed certificate exists in staging
+    - name: Validate signed certificate exists on target host
       register: staged_cert_stat
-      delegate_to: localhost
-      become: false
       ansible.builtin.stat:
         path: "{{ staging_dir }}/{{ domain_name }}.crt"
 
@@ -27,10 +25,8 @@
       ansible.builtin.fail:
         msg: "Signed certificate not found at {{ staging_dir }}/{{ domain_name }}.crt — ensure offline CA signing is complete before approving."
 
-    - name: Validate CA chain exists in staging
+    - name: Validate CA chain exists on target host
       register: staged_ca_stat
-      delegate_to: localhost
-      become: false
       ansible.builtin.stat:
         path: "{{ staging_dir }}/ca_chain.crt"
 
@@ -39,21 +35,23 @@
       ansible.builtin.fail:
         msg: "CA chain not found at {{ staging_dir }}/ca_chain.crt — ensure the CA chain is deposited before approving."
 
-    - name: Deploy signed certificate to target host
+    - name: Deploy signed certificate to final location
       ansible.builtin.copy:
         src: "{{ staging_dir }}/{{ domain_name }}.crt"
         dest: "{{ cert_dir }}/{{ domain_name }}.crt"
         owner: root
         group: root
         mode: '0644'
+        remote_src: true
 
-    - name: Deploy CA chain to target host
+    - name: Deploy CA chain to final location
       ansible.builtin.copy:
         src: "{{ staging_dir }}/ca_chain.crt"
         dest: "{{ cert_dir }}/ca_chain.crt"
         owner: root
         group: root
         mode: '0644'
+        remote_src: true
 
     - name: Verify certificate chain of trust
       register: cert_verify
@@ -78,9 +76,7 @@
         state: restarted
         enabled: true
 
-    - name: Clean up staging directory
-      delegate_to: localhost
-      become: false
+    - name: Clean up staging directory on target host
       loop:
         - "{{ staging_dir }}/{{ domain_name }}.csr"
         - "{{ staging_dir }}/{{ domain_name }}.crt"

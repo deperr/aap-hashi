@@ -15,6 +15,7 @@
       loop:
         - "{{ cert_dir }}"
         - "{{ key_dir }}"
+        - "{{ staging_dir }}"
       ansible.builtin.file:
         path: "{{ item }}"
         state: directory
@@ -39,42 +40,15 @@
         cmd: >-
           openssl req -new
           -key {{ key_dir }}/{{ domain_name }}.key
-          -out /tmp/{{ domain_name }}.csr
+          -out {{ staging_dir }}/{{ domain_name }}.csr
           -subj "/CN={{ domain_name }}"
           -addext "subjectAltName=DNS:{{ domain_name }}"
       changed_when: true
-
-    - name: Read CSR content from target host
-      register: slurped_csr
-      ansible.builtin.slurp:
-        src: "/tmp/{{ domain_name }}.csr"
-
-    - name: Ensure staging directory exists on controller
-      delegate_to: localhost
-      become: false
-      ansible.builtin.file:
-        path: "{{ staging_dir }}"
-        state: directory
-        mode: '0700'
-
-    - name: Save CSR to secure local staging folder
-      delegate_to: localhost
-      become: false
-      ansible.builtin.copy:
-        content: "{{ slurped_csr['content'] | b64decode }}"
-        dest: "{{ staging_dir }}/{{ domain_name }}.csr"
-        mode: '0600'
-
-    - name: Clean up temporary CSR from target host
-      ansible.builtin.file:
-        path: "/tmp/{{ domain_name }}.csr"
-        state: absent
 
     - name: Save target host to job artifacts for Phase 2
       ansible.builtin.set_stats:
         data:
           csr_domain: "{{ domain_name }}"
-          csr_staging_path: "{{ staging_dir }}/{{ domain_name }}.csr"
         per_host: false
         aggregate: true
 
@@ -82,5 +56,5 @@
       ansible.builtin.debug:
         msg:
           - "CSR generated for {{ domain_name }}"
-          - "Staged at: {{ staging_dir }}/{{ domain_name }}.csr"
-          - "Workflow paused - awaiting approval to sign and deploy"
+          - "Staged at: {{ staging_dir }}/{{ domain_name }}.csr on target host"
+          - "Workflow paused - awaiting offline CA signing and approval"
