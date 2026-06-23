@@ -99,6 +99,12 @@
         state: restarted
         enabled: true
 
+    - name: Extract serial number from new certificate
+      register: new_cert_serial
+      changed_when: false
+      ansible.builtin.shell:
+        cmd: openssl x509 -noout -serial -in {{ cert_dir }}/{{ domain_name }}.crt | cut -d= -f2 | sed 's/../&:/g' | sed 's/:$//' | tr 'A-F' 'a-f'
+
     - name: Clean up staging directory on target host
       loop:
         - "{{ staging_dir }}/{{ domain_name }}.csr"
@@ -112,6 +118,7 @@
       ansible.builtin.debug:
         msg:
           - "Certificate deployed for {{ domain_name }}"
+          - "New serial: {{ new_cert_serial.stdout }}"
           - "Revoked serial: {{ revoked_cert.stdout | default('N/A - no previous certificate') }}"
           - "Chain verification: {{ cert_verify.stdout }}"
           - ""
