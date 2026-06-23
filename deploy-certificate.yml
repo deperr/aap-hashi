@@ -35,6 +35,31 @@
       ansible.builtin.fail:
         msg: "CA chain not found at {{ staging_dir }}/ca_chain.crt — ensure the CA chain is deposited before approving."
 
+    - name: Check for existing certificate on target host
+      register: existing_cert
+      ignore_errors: true
+      ansible.builtin.slurp:
+        src: "{{ cert_dir }}/{{ domain_name }}.crt"
+
+    - name: Extract serial number from previous certificate
+      register: revoked_cert
+      when: existing_cert is succeeded
+      changed_when: false
+      ansible.builtin.shell:
+        cmd: openssl x509 -noout -serial -in {{ cert_dir }}/{{ domain_name }}.crt | cut -d= -f2 | sed 's/../&:/g' | sed 's/:$//' | tr 'A-F' 'a-f'
+
+    - name: Revoke previous certificate in Vault
+      when: existing_cert is succeeded
+      delegate_to: localhost
+      become: false
+      hashicorp.vault.pki_certificate:
+        state: revoked
+        engine_mount_point: pki
+        certificate: "{{ existing_cert['content'] | b64decode }}"
+        url: "{{ vault_url }}"
+        auth_method: token
+        token: "{{ vault_token }}"
+
     - name: Deploy signed certificate to final location
       ansible.builtin.copy:
         src: "{{ staging_dir }}/{{ domain_name }}.crt"
@@ -89,6 +114,7 @@
       ansible.builtin.debug:
         msg:
           - "Certificate deployed for {{ domain_name }}"
+          - "Revoked serial: {{ revoked_cert.stdout | default('N/A - no previous certificate') }}"
           - "Chain verification: {{ cert_verify.stdout }}"
           - ""
           - "Files deployed:"
